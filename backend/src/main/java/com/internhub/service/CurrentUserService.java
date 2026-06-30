@@ -16,7 +16,7 @@ public class CurrentUserService {
 
     public UserAccount resolve(Long currentUserId) {
         if (currentUserId == null) {
-            return userRepository.findByUsername("mentor")
+            return userRepository.findByUsername("daoshiA")
                     .orElseThrow(() -> new NotFoundException("Default mentor user not found"));
         }
         return userRepository.findById(currentUserId)

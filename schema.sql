@@ -6,6 +6,7 @@ CREATE TABLE app_users (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     username VARCHAR(60) NOT NULL UNIQUE,
     display_name VARCHAR(80) NOT NULL,
+    password VARCHAR(100) NOT NULL,
     role VARCHAR(20) NOT NULL,
     avatar_color VARCHAR(120)
 );

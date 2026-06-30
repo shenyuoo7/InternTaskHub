@@ -9,6 +9,7 @@ const activeView = ref('dashboard')
 const loginLoading = ref(false)
 const pageLoading = ref(false)
 const taskSaving = ref(false)
+const profileSaving = ref(false)
 const newsLoading = ref(false)
 const users = ref([])
 const tasks = ref([])
@@ -26,10 +27,27 @@ const dashboard = ref({
 })
 
 const viewMode = ref('card')
+const loginFormRef = ref()
 const taskDialogVisible = ref(false)
+const profileDialogVisible = ref(false)
 const taskFormRef = ref()
+const profileFormRef = ref()
 const chartEl = ref()
 let chartInstance
+
+const loginForm = reactive({
+  username: '',
+  password: '',
+})
+
+const loginError = ref('')
+
+const profileForm = reactive({
+  displayName: '',
+  username: '',
+  role: '',
+  password: '',
+})
 
 const filters = reactive({
   keyword: '',
@@ -59,23 +77,44 @@ const statusOptions = [
 const priorityOptions = [
   { label: '高', value: 'HIGH', type: 'danger' },
   { label: '中', value: 'MEDIUM', type: 'warning' },
-  { label: '低', value: 'LOW', type: 'success' },
+  { label: '低', value: 'LOW', type: 'primary' },
 ]
 
 const quickUsers = [
-  { username: 'mentor', title: '导师登录', note: '可查看和分配所有任务' },
-  { username: 'intern', title: '实习生登录', note: '仅查看自己的任务' },
+  { username: 'daoshiA', title: '导师A', role: '导师', note: '可查看全部任务' },
+  { username: 'daoshiB', title: '导师B', role: '导师', note: '可查看全部任务' },
+  { username: 'xiaozhao', title: '实习生小赵', role: '实习生', note: '仅看自己的任务' },
+  { username: 'xiaoli', title: '实习生小李', role: '实习生', note: '仅看自己的任务' },
+  { username: 'xiaowang', title: '实习生小王', role: '实习生', note: '仅看自己的任务' },
+  { username: 'xiaoliu', title: '实习生小刘', role: '实习生', note: '仅看自己的任务' },
 ]
 
 const menuItems = [
   { key: 'dashboard', label: '个人仪表盘', icon: 'DataAnalysis' },
   { key: 'tasks', label: '任务管理', icon: 'List' },
-  { key: 'news', label: '实施资讯', icon: 'Connection' },
+  { key: 'news', label: '技术资讯', icon: 'Connection' },
 ]
 
 const isMentor = computed(() => currentUser.value?.role === 'MENTOR')
 const activeTitle = computed(() => menuItems.find((item) => item.key === activeView.value)?.label || '')
+const activeSubtitle = computed(() => {
+  if (activeView.value === 'dashboard') return '查看任务进度、临期提醒和完成情况'
+  if (activeView.value === 'tasks') return '筛选负责人、流转任务状态并关联实时资讯'
+  return '搜索技术资讯，刷新最新动态并辅助任务推进'
+})
 const currentRoleText = computed(() => (isMentor.value ? '导师' : '实习生'))
+const userInitial = computed(() => {
+  const name = currentUser.value?.displayName?.trim()
+  const chars = name ? Array.from(name) : []
+  return chars.length ? chars[chars.length - 1] : '用'
+})
+
+const taskStats = computed(() => ({
+  total: tasks.value.length,
+  todo: tasks.value.filter((task) => task.status === 'TODO').length,
+  inProgress: tasks.value.filter((task) => task.status === 'IN_PROGRESS').length,
+  done: tasks.value.filter((task) => task.status === 'DONE').length,
+}))
 
 const urgentTasks = computed(() =>
   tasks.value
@@ -90,6 +129,15 @@ const taskRules = {
   assigneeId: [{ required: true, message: '请选择负责人', trigger: 'change' }],
 }
 
+const loginRules = {
+  username: [{ required: true, message: '请输入账号', trigger: 'blur' }],
+  password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
+}
+
+const profileRules = {
+  displayName: [{ required: true, message: '请输入显示名', trigger: 'blur' }],
+}
+
 onMounted(async () => {
   if (currentUser.value) {
     await loadWorkspace()
@@ -102,21 +150,31 @@ onBeforeUnmount(() => {
   chartInstance?.dispose()
 })
 
-watch([dashboard, activeView], () => {
-  nextTick(renderChart)
+watch([dashboard, tasks, activeView], () => {
+  scheduleChartRender()
 }, { deep: true })
 
-async function quickLogin(username) {
+function fillDemoAccount(user) {
+  loginForm.username = user.username
+  loginForm.password = ''
+  loginError.value = ''
+  nextTick(() => loginFormRef.value?.clearValidate?.())
+}
+
+async function submitLogin() {
+  await loginFormRef.value?.validate()
   loginLoading.value = true
+  loginError.value = ''
   try {
-    const response = await authApi.login(username)
+    const response = await authApi.login(loginForm.username.trim(), loginForm.password)
     currentUser.value = response.user
     localStorage.setItem('ith-user', JSON.stringify(response.user))
     localStorage.setItem('ith-token', response.token)
     ElMessage.success(`已进入 ${response.user.displayName} 工作台`)
     await loadWorkspace()
   } catch (error) {
-    ElMessage.error(errorMessage(error))
+    loginError.value = errorMessage(error) || '账号或密码错误'
+    ElMessage.error(loginError.value)
   } finally {
     loginLoading.value = false
   }
@@ -126,8 +184,45 @@ function logout() {
   localStorage.removeItem('ith-user')
   localStorage.removeItem('ith-token')
   currentUser.value = null
+  chartInstance?.dispose()
+  chartInstance = null
+  loginForm.password = ''
+  loginError.value = ''
   tasks.value = []
   activeView.value = 'dashboard'
+}
+
+function openProfileSettings() {
+  Object.assign(profileForm, {
+    displayName: currentUser.value?.displayName || '',
+    username: currentUser.value?.username || '',
+    role: currentRoleText.value,
+    password: '',
+  })
+  profileDialogVisible.value = true
+  nextTick(() => profileFormRef.value?.clearValidate?.())
+}
+
+async function saveProfileSettings() {
+  await profileFormRef.value?.validate()
+  profileSaving.value = true
+  try {
+    const payload = {
+      displayName: profileForm.displayName.trim(),
+      password: profileForm.password || null,
+    }
+    const updatedUser = await userApi.updateProfile(payload)
+    currentUser.value = updatedUser
+    localStorage.setItem('ith-user', JSON.stringify(updatedUser))
+    profileDialogVisible.value = false
+    profileForm.password = ''
+    await Promise.all([loadUsers(), loadTasks(), loadDashboard()])
+    ElMessage.success('个人设置已保存')
+  } catch (error) {
+    ElMessage.error(errorMessage(error))
+  } finally {
+    profileSaving.value = false
+  }
 }
 
 async function loadWorkspace() {
@@ -163,6 +258,12 @@ async function loadNews() {
   newsLoading.value = true
   try {
     news.value = await newsApi.list(newsKeyword.value)
+    if (!news.value.length) {
+      ElMessage.info('暂未找到匹配的技术资讯，可换个关键词或点击刷新资讯')
+    }
+  } catch (error) {
+    news.value = []
+    ElMessage.error(`技术资讯加载失败：${errorMessage(error)}`)
   } finally {
     newsLoading.value = false
   }
@@ -313,33 +414,109 @@ function exportCsv() {
 
 function renderChart() {
   if (activeView.value !== 'dashboard' || !chartEl.value) return
+  if (chartEl.value.clientWidth === 0) {
+    window.setTimeout(renderChart, 80)
+    return
+  }
   if (!chartInstance) {
     chartInstance = echarts.init(chartEl.value)
   }
-  chartInstance.setOption({
-    color: ['#64748b', '#f59e0b', '#10b981'],
-    tooltip: { trigger: 'item' },
-    legend: { bottom: 0, left: 'center' },
-    series: [
-      {
-        name: '任务状态',
-        type: 'pie',
-        radius: ['48%', '70%'],
-        center: ['50%', '45%'],
-        avoidLabelOverlap: true,
-        label: { formatter: '{b}: {c}' },
-        data: [
-          { name: '待办', value: dashboard.value.todo },
-          { name: '进行中', value: dashboard.value.inProgress },
-          { name: '已完成', value: dashboard.value.done },
-        ],
-      },
-    ],
+
+  const statusData = [
+    { name: '待办', value: taskStats.value.todo },
+    { name: '进行中', value: taskStats.value.inProgress },
+    { name: '已完成', value: taskStats.value.done },
+  ]
+  const assigneeMap = new Map()
+  tasks.value.forEach((task) => {
+    const name = task.assignee?.displayName || '未分配'
+    assigneeMap.set(name, (assigneeMap.get(name) || 0) + 1)
   })
+  const assigneeNames = Array.from(assigneeMap.keys())
+  const assigneeValues = Array.from(assigneeMap.values())
+  const hasData = taskStats.value.total > 0
+
+  chartInstance.setOption({
+    color: ['#94a3b8', '#38bdf8', '#10b981', '#1677ff', '#14b8a6', '#f59e0b'],
+    animationDuration: 800,
+    animationEasing: 'cubicOut',
+    title: hasData
+      ? [
+          { text: '状态分布', left: '18%', top: 16, textStyle: { fontSize: 14, color: '#334155' } },
+          { text: '负责人任务量', left: '57%', top: 16, textStyle: { fontSize: 14, color: '#334155' } },
+        ]
+      : { text: '暂无任务数据', left: 'center', top: 'middle', textStyle: { color: '#64748b', fontSize: 16 } },
+    tooltip: {
+      trigger: 'item',
+      backgroundColor: 'rgba(15, 23, 42, 0.92)',
+      borderWidth: 0,
+      textStyle: { color: '#fff' },
+    },
+    legend: hasData ? { bottom: 0, left: 'center' } : { show: false },
+    grid: hasData
+      ? { left: '52%', right: '6%', top: 70, bottom: 54, containLabel: true }
+      : undefined,
+    xAxis: hasData
+      ? {
+          type: 'category',
+          data: assigneeNames,
+          axisTick: { show: false },
+          axisLine: { lineStyle: { color: '#cbd5e1' } },
+          axisLabel: { color: '#64748b' },
+        }
+      : undefined,
+    yAxis: hasData
+      ? {
+          type: 'value',
+          minInterval: 1,
+          splitLine: { lineStyle: { color: '#e2e8f0', type: 'dashed' } },
+          axisLabel: { color: '#64748b' },
+        }
+      : undefined,
+    series: hasData
+      ? [
+          {
+            name: '任务状态',
+            type: 'pie',
+            radius: ['42%', '66%'],
+            center: ['26%', '56%'],
+            avoidLabelOverlap: true,
+            label: { formatter: '{b}\n{c}', color: '#334155' },
+            emphasis: {
+              scale: true,
+              scaleSize: 8,
+              itemStyle: { shadowBlur: 18, shadowColor: 'rgba(22, 119, 255, 0.22)' },
+            },
+            data: statusData,
+          },
+          {
+            name: '负责人任务数',
+            type: 'bar',
+            data: assigneeValues,
+            barWidth: 24,
+            itemStyle: {
+              borderRadius: [8, 8, 0, 0],
+              color: '#1677ff',
+            },
+            emphasis: {
+              itemStyle: { color: '#14b8a6' },
+            },
+          },
+        ]
+      : [],
+  }, true)
+  chartInstance.resize()
 }
 
 function resizeChart() {
   chartInstance?.resize()
+}
+
+function scheduleChartRender() {
+  nextTick(() => {
+    renderChart()
+    window.setTimeout(resizeChart, 80)
+  })
 }
 
 function cleanParams(params) {
@@ -395,22 +572,80 @@ function errorMessage(error) {
 
 <template>
   <section v-if="!currentUser" class="login-screen">
-    <div class="login-panel">
-      <p class="eyebrow">Intern Task Hub</p>
-      <h1>实习任务协作台</h1>
-      <p class="login-copy">面向导师与实习生的任务分配、进度跟踪和技术资讯关联工作台。</p>
-      <div class="quick-login">
-        <button
-          v-for="user in quickUsers"
-          :key="user.username"
-          class="login-option"
-          :disabled="loginLoading"
-          @click="quickLogin(user.username)"
-        >
-          <span>{{ user.title }}</span>
-          <small>{{ user.note }}</small>
-        </button>
-      </div>
+    <div class="login-layout">
+      <section class="login-hero">
+        <span class="brand-mark">ITH</span>
+        <p class="eyebrow">INTERN TASK HUB</p>
+        <h1>实习任务协作台</h1>
+        <p class="login-copy">面向导师与实习生的任务分配、进度跟踪和技术资讯关联工作台。</p>
+        <div class="hero-points">
+          <span>任务流转</span>
+          <span>导师协作</span>
+          <span>实时资讯</span>
+        </div>
+      </section>
+
+      <section class="login-panel">
+        <div class="login-card">
+          <div class="login-card-head">
+            <p class="eyebrow">账号登录</p>
+            <h2>欢迎回来</h2>
+            <span>请输入账号和密码进入工作台</span>
+          </div>
+
+          <el-alert v-if="loginError" class="login-alert" :title="loginError" type="error" show-icon :closable="false" />
+
+          <el-form
+            ref="loginFormRef"
+            :model="loginForm"
+            :rules="loginRules"
+            label-position="top"
+            class="login-form"
+            @submit.prevent="submitLogin"
+          >
+            <el-form-item label="账号" prop="username">
+              <el-input v-model.trim="loginForm.username" size="large" placeholder="请输入登录账号">
+                <template #prefix><el-icon><User /></el-icon></template>
+              </el-input>
+            </el-form-item>
+            <el-form-item label="密码" prop="password">
+              <el-input
+                v-model="loginForm.password"
+                size="large"
+                type="password"
+                placeholder="请输入密码"
+                show-password
+                @keyup.enter="submitLogin"
+              >
+                <template #prefix><el-icon><Lock /></el-icon></template>
+              </el-input>
+            </el-form-item>
+            <el-button class="login-submit" type="primary" size="large" :loading="loginLoading" @click="submitLogin">
+              登录
+            </el-button>
+          </el-form>
+        </div>
+
+        <div class="demo-panel">
+          <div class="demo-head">
+            <h3>演示账号</h3>
+            <span>点击仅填入账号，密码请手动输入 123456</span>
+          </div>
+          <div class="quick-login">
+            <button
+              v-for="user in quickUsers"
+              :key="user.username"
+              class="login-option"
+              type="button"
+              @click="fillDemoAccount(user)"
+            >
+              <span>{{ user.title }}</span>
+              <strong>{{ user.username }}</strong>
+              <small>{{ user.role }} · {{ user.note }}</small>
+            </button>
+          </div>
+        </div>
+      </section>
     </div>
   </section>
 
@@ -422,13 +657,18 @@ function errorMessage(error) {
       </div>
 
       <div class="user-chip">
-        <span class="avatar" :style="{ background: currentUser.avatarColor }">
-          {{ currentUser.displayName.slice(-1) }}
-        </span>
-        <div>
-          <strong>{{ currentUser.displayName }}</strong>
-          <span>{{ currentRoleText }}</span>
+        <div class="avatar" :style="{ background: currentUser.avatarColor }">
+          <span class="avatar-text">{{ userInitial }}</span>
         </div>
+        <div class="user-info-text">
+          <strong>{{ currentUser.displayName }}</strong>
+          <span class="user-role-line">{{ currentUser.username }} · {{ currentRoleText }}</span>
+        </div>
+        <el-tooltip content="个人设置" placement="right">
+          <button class="settings-button" type="button" @click="openProfileSettings">
+            <el-icon><Setting /></el-icon>
+          </button>
+        </el-tooltip>
       </div>
 
       <nav class="side-nav" aria-label="主导航">
@@ -454,6 +694,7 @@ function errorMessage(error) {
         <div>
           <p class="eyebrow">{{ currentRoleText }}视角</p>
           <h2>{{ activeTitle }}</h2>
+          <span>{{ activeSubtitle }}</span>
         </div>
         <div class="topbar-actions">
           <el-button @click="loadWorkspace">
@@ -515,6 +756,25 @@ function errorMessage(error) {
       </section>
 
       <section v-show="activeView === 'tasks'" class="view-section">
+        <div class="task-summary-grid">
+          <article class="task-summary-card">
+            <span>全部任务</span>
+            <strong>{{ taskStats.total }}</strong>
+          </article>
+          <article class="task-summary-card">
+            <span>待办</span>
+            <strong>{{ taskStats.todo }}</strong>
+          </article>
+          <article class="task-summary-card">
+            <span>进行中</span>
+            <strong>{{ taskStats.inProgress }}</strong>
+          </article>
+          <article class="task-summary-card">
+            <span>已完成</span>
+            <strong>{{ taskStats.done }}</strong>
+          </article>
+        </div>
+
         <div class="toolbar">
           <el-input v-model="filters.keyword" clearable placeholder="搜索标题、描述、负责人" @keyup.enter="loadTasks">
             <template #prefix><el-icon><Search /></el-icon></template>
@@ -556,7 +816,8 @@ function errorMessage(error) {
             <h3>{{ task.title }}</h3>
             <p>{{ task.description || '暂无描述' }}</p>
             <div class="task-meta">
-              <span>{{ task.assignee?.displayName }}</span>
+              <span>负责人：{{ task.assignee?.displayName }}</span>
+              <span>创建人：{{ task.creator?.displayName }}</span>
               <el-tag :type="deadlineState(task).level">{{ deadlineState(task).text }}</el-tag>
             </div>
             <div class="task-actions">
@@ -608,7 +869,7 @@ function errorMessage(error) {
 
       <section v-show="activeView === 'news'" class="view-section">
         <div class="toolbar news-toolbar">
-          <el-input v-model="newsKeyword" clearable placeholder="搜索 Java、Spring Boot、Vue 等关键词" @keyup.enter="loadNews">
+          <el-input v-model="newsKeyword" clearable placeholder="搜索 Spring Boot、Vue3、Java、AI、Agent" @keyup.enter="loadNews">
             <template #prefix><el-icon><Search /></el-icon></template>
           </el-input>
           <el-button type="primary" :loading="newsLoading" @click="loadNews">
@@ -617,7 +878,7 @@ function errorMessage(error) {
           </el-button>
           <el-button :loading="newsLoading" @click="refreshNews">
             <el-icon><Refresh /></el-icon>
-            刷新 RSS
+            刷新资讯
           </el-button>
         </div>
 
@@ -628,12 +889,42 @@ function errorMessage(error) {
               <p>{{ item.summary || '暂无摘要' }}</p>
               <span>{{ item.source }} · {{ formatDateTime(item.publishedAt || item.fetchedAt) }}</span>
             </div>
-            <el-tag>{{ item.keyword || 'RSS' }}</el-tag>
+            <div class="news-actions">
+              <el-tag>{{ item.keyword || '技术资讯' }}</el-tag>
+              <a class="news-link-button" :href="item.link" target="_blank" rel="noreferrer">原文链接</a>
+            </div>
           </article>
-          <el-empty v-if="!news.length" description="暂无资讯，可点击刷新 RSS" />
+          <el-empty v-if="!news.length && !newsLoading" description="暂无匹配技术资讯，可换关键词或点击刷新资讯" />
         </div>
       </section>
     </main>
+
+    <el-dialog v-model="profileDialogVisible" title="个人设置" width="460px">
+      <el-form ref="profileFormRef" :model="profileForm" :rules="profileRules" label-position="top">
+        <el-form-item label="登录账号">
+          <el-input v-model="profileForm.username" disabled />
+        </el-form-item>
+        <el-form-item label="角色">
+          <el-input v-model="profileForm.role" disabled />
+        </el-form-item>
+        <el-form-item label="显示名" prop="displayName">
+          <el-input v-model="profileForm.displayName" maxlength="80" show-word-limit placeholder="请输入页面显示名" />
+        </el-form-item>
+        <el-form-item label="新密码（可选）">
+          <el-input
+            v-model="profileForm.password"
+            type="password"
+            show-password
+            maxlength="100"
+            placeholder="不填写则保持原密码"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="profileDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="profileSaving" @click="saveProfileSettings">保存</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog v-model="taskDialogVisible" :title="taskForm.id ? '任务详情 / 编辑' : '新建任务'" width="860px">
       <div class="dialog-layout">
@@ -668,7 +959,7 @@ function errorMessage(error) {
 
         <aside class="related-panel">
           <div class="panel-header">
-            <h3>相关资讯</h3>
+            <h3>相关技术资讯</h3>
             <el-button text type="primary" @click="loadRelatedNews()">
               <el-icon><Refresh /></el-icon>
               获取

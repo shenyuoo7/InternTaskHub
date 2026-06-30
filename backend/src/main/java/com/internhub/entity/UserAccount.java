@@ -24,6 +24,9 @@ public class UserAccount {
     @Column(nullable = false, length = 80)
     private String displayName;
 
+    @Column(nullable = false, length = 100)
+    private String password;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private Role role;
@@ -34,9 +37,10 @@ public class UserAccount {
     protected UserAccount() {
     }
 
-    public UserAccount(String username, String displayName, Role role, String avatarColor) {
+    public UserAccount(String username, String displayName, String password, Role role, String avatarColor) {
         this.username = username;
         this.displayName = displayName;
+        this.password = password;
         this.role = role;
         this.avatarColor = avatarColor;
     }
@@ -51,6 +55,18 @@ public class UserAccount {
 
     public String getDisplayName() {
         return displayName;
+    }
+
+    public void setDisplayName(String displayName) {
+        this.displayName = displayName;
+    }
+
+    public String getPassword() {
+        return password;
+    }
+
+    public void setPassword(String password) {
+        this.password = password;
     }
 
     public Role getRole() {
