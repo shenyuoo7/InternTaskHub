@@ -22,11 +22,12 @@ export function readStoredUser() {
 }
 
 export const authApi = {
-  login: (username) => api.post('/auth/mock-login', { username }).then((res) => res.data),
+  login: (username, password) => api.post('/auth/mock-login', { username, password }).then((res) => res.data),
 }
 
 export const userApi = {
   list: () => api.get('/users').then((res) => res.data),
+  updateProfile: (payload) => api.put('/users/me', payload).then((res) => res.data),
 }
 
 export const taskApi = {
